@@ -1,0 +1,14 @@
+[package]
+name = "array-util"
+version = "1.0.0"
+authors = ["Daniel Bloom"]
+edition = "2018"
+rust-version = "1.71.1"
+description = "no_std array helpers available without nightly"
+repository = "https://github.com/Daniel-Aaron-Bloom/array-util"
+license = "MIT"
+keywords = ["array", "generics", "embedded", "utilities", "utils"]
+categories = ["no-std"]
+
+[dependencies]
+arrayvec = { version = "0.7", default-feaures = false }
