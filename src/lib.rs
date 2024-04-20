@@ -1,5 +1,7 @@
 //! `no_std` array helpers available without nightly.
 //!
+//! ## Description
+//!
 //! Many useful array and slice methods are currently gated by nightly
 //! features, though their general functionality and interface is essentially
 //! stable. As such this crate provides stable alternatives to the following
@@ -10,12 +12,14 @@
 //! - [`array_try_map`]
 //! - [`array_chunks`]
 //! - [`slice_as_chunks`]
-//! 
+//! - [`slice_flatten`]
+//!
 //! ## Usage
 //!
-//! Users can either import the `SliceExt` or `ArrayExt` traits to bring in the
-//! desired methods, or use the bare methods. Note that trait methods have the
-//! `_ext` suffix to avoid collision with the core library methods.
+//! Users can either import an `Ext` trait (`SliceExt`, `ArrayExt`, or
+//! `SliceOfArrayExt`) traits to bring in the desired methods, or use the bare
+//! functions. Note that trait methods have the `_ext` suffix to avoid
+//! collision with the core library methods.
 //!
 //! ```
 //! use array_util::ArrayExt;
@@ -28,7 +32,7 @@
 //! let b = a.try_map_ext(|v| v.parse::<u32>());
 //! assert!(b.is_err());
 //! ```
-//! 
+//!
 //! ```
 //! let a = ["1", "2", "3"];
 //! let b = array_util::try_map(a, |v| v.parse::<u32>()).unwrap().map(|v| v + 1);
@@ -38,21 +42,31 @@
 //! let b = array_util::try_map(a, |v| v.parse::<u32>());
 //! assert!(b.is_err());
 //! ```
-//! 
+//!
+//! ## Limitations
+//!
+//! These functions aren't stabilized because they rely on undecided behaviors.
+//! For example, "should compile-time errors be generated for `0` length
+//! arrays?" or "What should the associated types and traits of `Try` be?". As
+//! these questions remain unresolved, reliance on the particular answers
+//! this crate has chosen in it's implementation may make porting to the
+//! eventual stabilized version more painful. If you're just calling functions,
+//! you'll probably be fine, but try to avoid using the `Ext` traits as bounds.
 //!  
 //! [`array_try_from_fn`]: https://github.com/rust-lang/rust/issues/89379
 //! [`array_try_map`]: https://github.com/rust-lang/rust/issues/79711
 //! [`array_chunks`]: https://github.com/rust-lang/rust/issues/74985
 //! [`slice_as_chunks`]: https://github.com/rust-lang/rust/issues/74985
+//! [`slice_flatten`]: https://github.com/rust-lang/rust/issues/95629
 #![no_std]
 #![warn(missing_docs)]
 
-use core::{array, iter::FusedIterator, ops::ControlFlow, slice};
+use core::{array, iter::FusedIterator, mem::size_of, ops::ControlFlow, slice};
 
 use arrayvec::ArrayVec;
 
 #[doc(hidden)]
-pub mod try_helper;
+mod try_helper;
 
 use try_helper::*;
 
@@ -615,6 +629,78 @@ pub fn as_rchunks_mut<T, const N: usize>(vals: &mut [T]) -> (&mut [T], &mut [[T;
     // that the length of the subslice is a multiple of N.
     let array_slice = unsafe { as_chunks_unchecked_mut(multiple_of_n) };
     (remainder, array_slice)
+}
+
+/// Takes a `&[[T; N]]`, and flattens it to a `&[T]`.
+///
+/// # Panics
+///
+/// This panics if the length of the resulting slice would overflow a `usize`.
+///
+/// This is only possible when flattening a slice of arrays of zero-sized
+/// types, and thus tends to be irrelevant in practice. If
+/// `size_of::<T>() > 0`, this will never panic.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(array_util::flatten(&[[1, 2, 3], [4, 5, 6]]), &[1, 2, 3, 4, 5, 6]);
+///
+/// assert_eq!(
+///     array_util::flatten(&[[1, 2, 3], [4, 5, 6]]),
+///     array_util::flatten(&[[1, 2], [3, 4], [5, 6]]),
+/// );
+///
+/// let slice_of_empty_arrays: &[[i32; 0]] = &[[], [], [], [], []];
+/// assert!(array_util::flatten(&slice_of_empty_arrays).is_empty());
+///
+/// let empty_slice_of_arrays: &[[u32; 10]] = &[];
+/// assert!(array_util::flatten(&empty_slice_of_arrays).is_empty());
+/// ```
+pub const fn flatten<T, const N: usize>(vals: &[[T; N]]) -> &[T] {
+    let len = if size_of::<T>() == 0 {
+        match vals.len().checked_mul(N) {
+            Some(v) => v,
+            None => panic!("slice len overflow"),
+        }
+    } else {
+        vals.len() * N
+    };
+    // SAFETY: `[T]` is layout-identical to `[T; N]`
+    unsafe { slice::from_raw_parts(vals.as_ptr().cast(), len) }
+}
+
+/// Takes a `&mut [[T; N]]`, and flattens it to a `&mut [T]`.
+///
+/// # Panics
+///
+/// This panics if the length of the resulting slice would overflow a `usize`.
+///
+/// This is only possible when flattening a slice of arrays of zero-sized
+/// types, and thus tends to be irrelevant in practice. If
+/// `size_of::<T>() > 0`, this will never panic.
+///
+/// # Examples
+///
+/// ```
+/// fn add_5_to_all(slice: &mut [i32]) {
+///     for i in slice {
+///         *i += 5;
+///     }
+/// }
+///
+/// let mut array = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+/// add_5_to_all(array_util::flatten_mut(&mut array));
+/// assert_eq!(array, [[6, 7, 8], [9, 10, 11], [12, 13, 14]]);
+/// ```
+pub fn flatten_mut<T, const N: usize>(vals: &mut [[T; N]]) -> &mut [T] {
+    let len = if size_of::<T>() == 0 {
+        vals.len().checked_mul(N).expect("slice len overflow")
+    } else {
+        vals.len() * N
+    };
+    // SAFETY: `[T]` is layout-identical to `[T; N]`
+    unsafe { slice::from_raw_parts_mut(vals.as_mut_ptr().cast(), len) }
 }
 
 /// A helper extension trait for arrays
@@ -1215,5 +1301,133 @@ impl<T> SliceExt for [T] {
     #[must_use]
     fn as_rchunks_mut_ext<const N: usize>(&mut self) -> (&mut [Self::T], &mut [[Self::T; N]]) {
         as_rchunks_mut(self)
+    }
+}
+
+/// A helper extension trait for slices of arrays
+pub trait SliceOfArrayExt {
+    #[doc(hidden)]
+    type T;
+
+    /// Takes a `&[[T; N]]`, and flattens it to a `&[T]`.
+    ///
+    /// # Panics
+    ///
+    /// This panics if the length of the resulting slice would overflow a `usize`.
+    ///
+    /// This is only possible when flattening a slice of arrays of zero-sized
+    /// types, and thus tends to be irrelevant in practice. If
+    /// `size_of::<T>() > 0`, this will never panic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use array_util::SliceOfArrayExt;
+    ///
+    /// assert_eq!([[1, 2, 3], [4, 5, 6]].flatten_ext(), &[1, 2, 3, 4, 5, 6]);
+    ///
+    /// assert_eq!(
+    ///     [[1, 2, 3], [4, 5, 6]].flatten_ext(),
+    ///     [[1, 2], [3, 4], [5, 6]].flatten_ext(),
+    /// );
+    ///
+    /// let slice_of_empty_arrays: &[[i32; 0]] = &[[], [], [], [], []];
+    /// assert!(slice_of_empty_arrays.flatten_ext().is_empty());
+    ///
+    /// let empty_slice_of_arrays: &[[u32; 10]] = &[];
+    /// assert!(empty_slice_of_arrays.flatten_ext().is_empty());
+    /// ```
+    fn flatten_ext(&self) -> &[Self::T];
+
+    /// Takes a `&mut [[T; N]]`, and flattens it to a `&mut [T]`.
+    ///
+    /// # Panics
+    ///
+    /// This panics if the length of the resulting slice would overflow a `usize`.
+    ///
+    /// This is only possible when flattening a slice of arrays of zero-sized
+    /// types, and thus tends to be irrelevant in practice. If
+    /// `size_of::<T>() > 0`, this will never panic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use array_util::SliceOfArrayExt;
+    ///
+    /// fn add_5_to_all(slice: &mut [i32]) {
+    ///     for i in slice {
+    ///         *i += 5;
+    ///     }
+    /// }
+    ///
+    /// let mut array = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+    /// add_5_to_all(array.flatten_mut_ext());
+    /// assert_eq!(array, [[6, 7, 8], [9, 10, 11], [12, 13, 14]]);
+    /// ```
+    fn flatten_mut_ext(&mut self) -> &mut [Self::T];
+}
+
+impl<T, const N: usize> SliceOfArrayExt for [[T; N]] {
+    type T = T;
+
+    /// Takes a `&[[T; N]]`, and flattens it to a `&[T]`.
+    ///
+    /// # Panics
+    ///
+    /// This panics if the length of the resulting slice would overflow a `usize`.
+    ///
+    /// This is only possible when flattening a slice of arrays of zero-sized
+    /// types, and thus tends to be irrelevant in practice. If
+    /// `size_of::<T>() > 0`, this will never panic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use array_util::SliceOfArrayExt;
+    ///
+    /// assert_eq!([[1, 2, 3], [4, 5, 6]].flatten_ext(), &[1, 2, 3, 4, 5, 6]);
+    ///
+    /// assert_eq!(
+    ///     [[1, 2, 3], [4, 5, 6]].flatten_ext(),
+    ///     [[1, 2], [3, 4], [5, 6]].flatten_ext(),
+    /// );
+    ///
+    /// let slice_of_empty_arrays: &[[i32; 0]] = &[[], [], [], [], []];
+    /// assert!(slice_of_empty_arrays.flatten_ext().is_empty());
+    ///
+    /// let empty_slice_of_arrays: &[[u32; 10]] = &[];
+    /// assert!(empty_slice_of_arrays.flatten_ext().is_empty());
+    /// ```
+    fn flatten_ext(&self) -> &[Self::T] {
+        flatten(self)
+    }
+
+    /// Takes a `&mut [[T; N]]`, and flattens it to a `&mut [T]`.
+    ///
+    /// # Panics
+    ///
+    /// This panics if the length of the resulting slice would overflow a `usize`.
+    ///
+    /// This is only possible when flattening a slice of arrays of zero-sized
+    /// types, and thus tends to be irrelevant in practice. If
+    /// `size_of::<T>() > 0`, this will never panic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use array_util::SliceOfArrayExt;
+    ///
+    /// fn add_5_to_all(slice: &mut [i32]) {
+    ///     for i in slice {
+    ///         *i += 5;
+    ///     }
+    /// }
+    ///
+    /// let mut array = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+    /// add_5_to_all(array.flatten_mut_ext());
+    /// assert_eq!(array, [[6, 7, 8], [9, 10, 11], [12, 13, 14]]);
+    /// ```
+    fn flatten_mut_ext(&mut self) -> &mut [Self::T] {
+        flatten_mut(self)
     }
 }

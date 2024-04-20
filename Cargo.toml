@@ -1,6 +1,6 @@
 [package]
 name = "array-util"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Daniel Bloom"]
 edition = "2018"
 rust-version = "1.71.1"
