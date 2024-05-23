@@ -1,6 +1,6 @@
 [package]
 name = "array-util"
-version = "1.0.1"
+version = "1.0.2"
 authors = ["Daniel Bloom"]
 edition = "2018"
 rust-version = "1.71.1"
@@ -11,4 +11,4 @@ keywords = ["array", "generics", "embedded", "utilities", "utils"]
 categories = ["no-std"]
 
 [dependencies]
-arrayvec = { version = "0.7", default-feaures = false }
+arrayvec = { version = "0.7", default-features = false }
